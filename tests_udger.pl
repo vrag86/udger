@@ -33,6 +33,7 @@ my $u = Udger->new(-sqlite => $SQLITE);
 isa_ok ($u, 'Udger');
 
 ok ($u->parse($ua));
+ok ($u->print());
 
 
 

@@ -54,8 +54,11 @@ sub db_connect {
 sub parse {
 	my $self 			= shift;
 	$self->{ua} 		= shift || do {$self->error('Error parse: You must specify useragent $self->parse(\'UserAgent\')'); return};
+	my %opt				= @_;
 
 	my %data;
+	$self->{data} = \%data;
+
 	$data{"type"}             = "unknown";
 	$data{"ua_name"}          = "unknown";
 	$data{"ua_ver"}           = "";
@@ -77,7 +80,14 @@ sub parse {
 	$data{"device_icon"}      = "desktop.png";
 	$data{"device_udger_url"} = $self->{resources_url}."device-detail?device=Personal%20computer";
 
+	#Parsing data
 	$self->parse_browser(\%data) or return;
+	$self->parse_os(\%data) or return;
+	$self->parse_device(\%data) or return;
+	$self->parse_uptodate(\%data);
+
+	$self->parse_fragments(%data)
+		if $opt{-parse_fragments};
 
 }
 
@@ -103,8 +113,8 @@ sub parse_browser {
 		}
 	}
 	if (not $self->{browser_id}) {
-		$self->error("Cant define browser_id");
-		return;
+		print("Cant define browser_id");
+		return -1;
 	}
 	
 	#Get info from c_browser table
@@ -133,6 +143,131 @@ sub parse_browser {
 	return 1;
 }
 
+
+sub parse_os {
+	my $self 				= shift;
+	my $data 				= shift;
+	my $dbh 				= $self->{dbh};
+	my $ua					= $self->{ua} 			|| return;
+	my $browser_id 			= $self->{browser_id};
+	$self->{os_id}			= undef;
+
+	if ($browser_id) {
+		my $sth = $dbh->prepare(qq{SELECT os FROM c_browser_os WHERE browser=$browser_id}) or do{$self->error("Error: ". $dbh->errstr); return};
+		$sth->execute() or do{$self->error("Error: " . $dbh->errstr); return};
+		if (my $r = $sth->fetchrow_hashref()) {
+			$self->{os_id}	= $r->{os};
+		}
+	}
+
+	if (not $self->{os_id}) {
+		#Найдем os_id по регулярке
+		my $sth = $dbh->prepare(qq{SELECT os, regstring FROM reg_os ORDER BY sequence ASC}) or do{$self->error("Error: ". $dbh->errstr); return};
+		$sth->execute() or do{$self->error("Error: " . $dbh->errstr); return};
+		while (my $r = $sth->fetchrow_hashref()) {
+			if (my ($match, $mod) = $r->{regstring} =~ /\/(.+)\/(.*)/) {
+				$mod = '' if not $mod;
+				if ($ua =~ /(?$mod)$match/) {
+					$self->{os_id} = $r->{os};
+					last;
+				}
+			}
+		}
+	}
+
+	if ($self->{os_id}) {
+		my $sth = $dbh->prepare(qq{SELECT name, family, url, company, company_url, icon FROM c_os WHERE id=$self->{os_id}}) or do{$self->error("Error: ". $dbh->errstr); return};
+		$sth->execute() or do{$self->error("Error: " . $dbh->errstr); return};
+		if (my $r = $sth->fetchrow_hashref()) {
+			$data->{os_name}			= $r->{name};
+			$data->{os_family}			= $r->{family};
+			$data->{os_url}				= $r->{url};
+			$data->{os_company}			= $r->{company};
+			$data->{os_company_url}		= $r->{company_url};
+			$data->{os_icon}			= $r->{icon};
+			$data->{os_udger_url}		= $self->{resources_url} . "os-detail?os=$r->{name}";
+		}
+	}
+	
+
+	return 1;
+}
+
+
+sub parse_device {
+	my $self 				= shift;
+	my $data 				= shift;
+	my $dbh 				= $self->{dbh};
+	my $ua					= $self->{ua} 			|| return;
+	$self->{device_id}		= undef;
+
+	my $sth = $dbh->prepare(qq{SELECT device, regstring FROM reg_device ORDER BY sequence ASC}) or do{$self->error("Error: ". $dbh->errstr); return};
+	$sth->execute() or do{$self->error("Error: " . $dbh->errstr); return};
+	while (my $r = $sth->fetchrow_hashref()) {
+		if (my ($match, $mod) = $r->{regstring} =~ /\/(.+)\/(.*)/) {
+			$mod = '' if not $mod;
+			if ($ua =~ /(?$mod)$match/) {
+				$self->{device_id} = $r->devices;
+				last;
+			}
+		}
+	}
+
+	if ($self->{device_id}) {
+		my $sth = $dbh->prepare(qq{SELECT name, icon FROM c_device WHERE id=$self->{device_id}}) or do{$self->error("Error: ". $dbh->errstr); return};
+		$sth->execute() or do{$self->error("Error: " . $dbh->errstr); return};
+		if (my $r = fetchrow_hashref()) {
+			$data->{device_name}			= $r->{name};
+			$data->{device_icon}			= $r->{icon};
+			$data->{device_udger_url}		= $self->{resources_url} . "device-detail?device=$r->{name}";
+
+		}
+	}
+	elsif ($data->{type} eq 'Mobile Browser') {
+		$data->{device_name} 		= 'Smartphone';
+		$data->{device_icon}		= 'phone.png';
+		$data->{device_udger_url}	= $self->{resources_url} . "device-detail?device=Smartphone";
+	}
+	elsif ($data->{type} eq 'Library' || $data->{type} eq 'Validator' || $data->{type} eq 'Other' || $data->{type} eq 'Useragent Anonymizer') {
+		$data->{device_name}		= 'Other';
+		$data->{device_icon}		= 'other.png';
+		$data->{device_udger_url}	= $self->{resources_url} . "device-detail?device=Other";
+	}
+
+	return 1;
+}
+
+
+sub parse_uptodate {
+	my $self 				= shift;
+	my $data 				= shift;
+	my $dbh 				= $self->{dbh};
+	my $browser_id			= $self->{browser_id} || return;
+
+	my ($ver_major) = $data->{ua_ver} =~ /(.+?)\./;
+	my $sth = $dbh->prepare(qq{SELECT ver, url FROM c_browser_uptodate WHERE browser_id=$browser_id AND (os_independent = 1 OR os_family='$data->{os_family}')}) or do{$self->error("Error: ". $dbh->errstr); return};
+	$sth->execute() or do{$self->error("Error: " . $dbh->errstr); return};
+	if (my $r = $sth->fetchrow_hashref()) {
+		$data->{uptodate_controlled} 	= 'true';
+		$data->{uptodate_is} 			= $ver_major >= $r->{ver} ? 'true' : 'false';
+		$data->{uptodate_ver}			= $r->{ver};
+		$data->{uptodate_url}			= $r->{url};
+	}
+
+	return 1;
+}
+
+
+sub parse_fragments {
+	my $self 				= shift;
+	my $data 				= shift;
+	my $dbh 				= $self->{dbh};
+	my $browser_id			= $self->{browser_id} || return;
+
+	return 1;
+}
+
+
 sub error {
 	my $self = shift;
 	push @{$self->{error}}, @_;
@@ -144,6 +279,15 @@ sub errstr {
 	$self->{error} ? join("\n", @{$self->{error}}) : undef;
 }
 
+sub data {
+	my $self = shift;
+	$self->{data} ? $self->{data} : undef;
+}
+
+sub print {
+	my $self = shift;
+	$self->{data} ? p $self->{data} : undef;
+}
 
 
 =pod
@@ -159,6 +303,33 @@ my $client = Udger->new(%opt);
 
 $opt{-sqlite} - 	Path to Sqlite3 udger file
 $opt{-dbh}			Reference to dbh (DBI object) to database which contains udger DB
+
+=head1 EXAMPLES
+use Udger;
+use Data::Printer;
+
+my $ua = 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:43.0) Gecko/20100101 Firefox/43.0';
+my $client = Udger->new(-sqlite => '/tmp/udgerdb.dat');
+
+$client->parse(ua) or die "Cant parse $ua " . $client->errstr;
+my $data = $client->data();
+p $data;  #Print $data hashref via Data::Printer
+
+=head1 DESCRIPTION
+$client = Udger->new(-sqlite => '/tmp/udgerdb.dat');
+
+=over 4
+=item $client->parse($ua, %opt)
+Parse useragent string $ua. Return undef if error. Error message contain $client->errstr method
+$opt{-parse_fragments} - Parsing fragments
+
+=item $client->print()
+Print data to screen. Return undef if error.
+
+=item $client->data()
+Return $hashref to data or undef if error.
+
 =cut
+
 
 1;
