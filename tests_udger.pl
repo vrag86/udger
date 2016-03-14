@@ -24,13 +24,15 @@ use utf8;
 use open qw(:std :utf8);
 use FindBin qw '$Bin';
 use Test::More qw 'no_plan';
-my $SQLITE = '/tmp/udgercache/udgerdb.dat';
+my $SQLITE = '/home/anna/Downloads/udgerdb.dat';
+my $ua = 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:43.0) Gecko/20100101 Firefox/43.0';
 
 require_ok ('Udger');
 
 my $u = Udger->new(-sqlite => $SQLITE);
 isa_ok ($u, 'Udger');
 
+ok ($u->parse($ua));
 
 
 

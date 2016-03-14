@@ -20,10 +20,9 @@ use strict;
 use warnings;
 use utf8;
 use open qw(:std :utf8);
-use Log::Any qw($log);
-use Log::Any::Adapter ('Stdout');
 use DBI;
 use Carp qw/croak/;
+use Data::Printer;
 
 
 sub new {
@@ -37,6 +36,8 @@ sub new {
 
 	croak "You must specify -sqlite => <path to sqlite fname> or -dbh => ref to dbh connection" 
 		if not $self->{dbh};
+    $self->{resources_url} = 'https://udger.com/resources/ua-list/';
+	$self->{error} = {};
 
 	bless $self, $class;
 	return $self;
@@ -46,8 +47,103 @@ sub new {
 sub db_connect {
 	my $fname = shift;
 	my $dbh = DBI->connect("dbi:SQLite:dbname=$fname") or return;
+	return $dbh;
+}
+
+
+sub parse {
+	my $self 			= shift;
+	$self->{ua} 		= shift || do {$self->error('Error parse: You must specify useragent $self->parse(\'UserAgent\')'); return};
+
+	my %data;
+	$data{"type"}             = "unknown";
+	$data{"ua_name"}          = "unknown";
+	$data{"ua_ver"}           = "";
+	$data{"ua_family"}        = "unknown";
+	$data{"ua_url"}           = "unknown";
+	$data{"ua_company"}       = "unknown";
+	$data{"ua_company_url"}   = "unknown";
+	$data{"ua_icon"}          = "unknown.png";
+	$data{"ua_engine"}        = "n/a";
+	$data{"ua_udger_url"}     = "";
+	$data{"os_name"}          = "unknown";
+	$data{"os_family"}        = "unknown";
+	$data{"os_url"}           = "unknown";
+	$data{"os_company"}       = "unknown";
+	$data{"os_company_url"}   = "unknown";
+	$data{"os_icon"}          = "unknown.png";
+	$data{"os_udger_url"}     = "";
+	$data{"device_name"}      = "Personal computer";
+	$data{"device_icon"}      = "desktop.png";
+	$data{"device_udger_url"} = $self->{resources_url}."device-detail?device=Personal%20computer";
+
+	$self->parse_browser(\%data) or return;
+
+}
+
+
+sub parse_browser {
+	my $self 				= shift;
+	my $data 				= shift;
+	my $ua					= $self->{ua} || return;
+	my $dbh 				= $self->{dbh};
+	$self->{browser_id} 	= undef;
+	my $ua_ver;
+
+	my $sth = $dbh->prepare(qq{SELECT browser, regstring FROM reg_browser ORDER by sequence ASC}) or do{$self->error("Error: " . $dbh->errstr); return};
+	$sth->execute() or do{$self->error("Error: " . $dbh->errstr); return};
+	while (my $r = $sth->fetchrow_hashref()) {
+		if (my ($match, $mod) = $r->{regstring} =~ /\/(.+)\/(.*)/) {
+			$mod = '' if not $mod;
+			if ($ua =~ /(?$mod)$match/) {
+				$self->{browser_id} 	= $r->{'browser'};
+				$ua_ver = $1 || '';
+				last;
+			}	
+		}
+	}
+	if (not $self->{browser_id}) {
+		$self->error("Cant define browser_id");
+		return;
+	}
+	
+	#Get info from c_browser table
+	$sth = $dbh->prepare(qq{SELECT type, name, engine, url, company, company_url, icon FROM c_browser WHERE id=$self->{browser_id}}) or do{$self->error("Error: " . $dbh->errstr); return};
+	$sth->execute() or do{$self->error("Error: " . $dbh->errstr); return};
+	if (my $r = $sth->fetchrow_hashref()) {
+		$data->{'ua_name'} 			= $r->{'name'};
+		$data->{'ua_name'} 			.= " " . $ua_ver if $ua_ver;
+		$data->{'ua_ver'}			= $ua_ver;
+		$data->{'ua_family'}		= $r->{'name'};
+		$data->{'ua_url'}       	= $r->{'url'};
+		$data->{'ua_company'}  		= $r->{'company'};
+		$data->{'ua_company_url'}   = $r->{'company_url'};
+		$data->{'ua_icon'}          = $r->{'icon'};
+		$data->{'ua_engine'}        = $r->{'engine'};
+		$data->{'ua_udger_url'}     = $self->{resources_url} . "browser-detail?browser=$r->{name}";
+
+		#Get info from c_browser_type table
+		$sth = $dbh->prepare(qq{SELECT name FROM c_browser_type WHERE type=$r->{type}}) or do{$self->error("Error: " . $dbh->errstr); return};
+		$sth->execute() or do{$self->error("Error: " . $dbh->errstr); return};
+		if (my $t = $sth->fetchrow_hashref()) {
+			$data->{'type'}				= $t->{'name'};
+		}
+	}
+
 	return 1;
 }
+
+sub error {
+	my $self = shift;
+	push @{$self->{error}}, @_;
+	return 1;
+}
+
+sub errstr {
+	my $self = shift;
+	$self->{error} ? join("\n", @{$self->{error}}) : undef;
+}
+
 
 
 =pod
