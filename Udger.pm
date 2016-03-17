@@ -22,7 +22,6 @@ use utf8;
 use open qw(:std :utf8);
 use DBI;
 use Carp qw/croak/;
-use Data::Printer;
 use Digest::MD5 qw(md5_hex);
 
 
@@ -60,26 +59,26 @@ sub parse {
 	my %data;
 	$self->{data} = \%data;
 
-	$data{"type"}             = "unknown";
-	$data{"ua_name"}          = "unknown";
-	$data{"ua_ver"}           = "";
-	$data{"ua_family"}        = "unknown";
-	$data{"ua_url"}           = "unknown";
-	$data{"ua_company"}       = "unknown";
-	$data{"ua_company_url"}   = "unknown";
-	$data{"ua_icon"}          = "unknown.png";
-	$data{"ua_engine"}        = "n/a";
-	$data{"ua_udger_url"}     = "";
-	$data{"os_name"}          = "unknown";
-	$data{"os_family"}        = "unknown";
-	$data{"os_url"}           = "unknown";
-	$data{"os_company"}       = "unknown";
-	$data{"os_company_url"}   = "unknown";
-	$data{"os_icon"}          = "unknown.png";
-	$data{"os_udger_url"}     = "";
-	$data{"device_name"}      = "Personal computer";
-	$data{"device_icon"}      = "desktop.png";
-	$data{"device_udger_url"} = $self->{resources_url}."device-detail?device=Personal%20computer";
+	$data{"type"}             	= "unknown";
+	$data{"ua_name"}          	= "unknown";
+	$data{"ua_ver"}           	= "";
+	$data{"ua_family"}        	= "unknown";
+	$data{"ua_url"}           	= "unknown";
+	$data{"ua_company"}       	= "unknown";
+	$data{"ua_company_url"}   	= "unknown";
+	$data{"ua_icon"}          	= "unknown.png";
+	$data{"ua_engine"}        	= "n/a";
+	$data{"ua_udger_url"}     	= "";
+	$data{"os_name"}          	= "unknown";
+	$data{"os_family"}        	= "unknown";
+	$data{"os_url"}           	= "unknown";
+	$data{"os_company"}      	= "unknown";
+	$data{"os_company_url"}  	= "unknown";
+	$data{"os_icon"}         	= "unknown.png";
+	$data{"os_udger_url"}  	  	= "";
+	$data{"device_name"}      	= "Personal computer";
+	$data{"device_icon"}      	= "desktop.png";
+	$data{"device_udger_url"} 	= $self->{resources_url}."device-detail?device=Personal%20computer";
 	$data{uptodate_controlled} 	= 'false';
 	$data{uptodate_is} 			= 'false';
 	$data{uptodate_ver}			= '';
@@ -250,7 +249,7 @@ sub parse_device {
 			$mod = '' if not $mod;
 			$mod =~ s/ //g;
 			if ($ua =~ /(?$mod)$match/) {
-				$self->{device_id} = $r->devices;
+				$self->{device_id} = $r->{device};
 				last;
 			}
 		}
@@ -259,7 +258,7 @@ sub parse_device {
 	if ($self->{device_id}) {
 		my $sth = $dbh->prepare(qq{SELECT name, icon FROM c_device WHERE id=$self->{device_id}}) or do{$self->error("Error: ". $dbh->errstr); return};
 		$sth->execute() or do{$self->error("Error: " . $dbh->errstr); return};
-		if (my $r = fetchrow_hashref()) {
+		if (my $r = $sth->fetchrow_hashref()) {
 			$data->{device_name}			= $r->{name};
 			$data->{device_icon}			= $r->{icon};
 			$data->{device_udger_url}		= $self->{resources_url} . "device-detail?device=$r->{name}";
@@ -382,12 +381,6 @@ sub data {
 	$self->{data} ? $self->{data} : undef;
 }
 
-sub print {
-	my $self = shift;
-	$self->{data} ? p $self->{data} : undef;
-}
-
-
 =pod
 
 =encoding utf-8
@@ -420,9 +413,6 @@ $client = Udger->new(-sqlite => '/tmp/udgerdb.dat');
 =item $client->parse($ua, %opt)
 Parse useragent string $ua. Return undef if error. Error message contain $client->errstr method
 $opt{-parse_fragments} - Parsing fragments
-
-=item $client->print()
-Print data to screen. Return undef if error.
 
 =item $client->data()
 Return $hashref to data or undef if error.
