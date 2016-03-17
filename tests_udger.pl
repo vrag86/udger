@@ -32,7 +32,7 @@ require_ok ('Udger');
 my $u = Udger->new(-sqlite => $SQLITE);
 isa_ok ($u, 'Udger');
 
-ok ($u->parse($ua));
+ok ($u->parse($ua, -parse_fragments => 1));
 ok ($u->print());
 
 

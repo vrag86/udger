@@ -86,8 +86,11 @@ sub parse {
 	$self->parse_device(\%data) or return;
 	$self->parse_uptodate(\%data);
 
-	$self->parse_fragments(%data)
+	$self->{data}->{fragments} = {};
+	$self->parse_fragments($self->{data}->{fragments})
 		if $opt{-parse_fragments};
+
+	return 1;
 
 }
 
@@ -105,6 +108,7 @@ sub parse_browser {
 	while (my $r = $sth->fetchrow_hashref()) {
 		if (my ($match, $mod) = $r->{regstring} =~ /\/(.+)\/(.*)/) {
 			$mod = '' if not $mod;
+			$mod =~ s/ //g;
 			if ($ua =~ /(?$mod)$match/) {
 				$self->{browser_id} 	= $r->{'browser'};
 				$ua_ver = $1 || '';
@@ -167,6 +171,7 @@ sub parse_os {
 		while (my $r = $sth->fetchrow_hashref()) {
 			if (my ($match, $mod) = $r->{regstring} =~ /\/(.+)\/(.*)/) {
 				$mod = '' if not $mod;
+				$mod =~ s/ //g;
 				if ($ua =~ /(?$mod)$match/) {
 					$self->{os_id} = $r->{os};
 					last;
@@ -206,6 +211,7 @@ sub parse_device {
 	while (my $r = $sth->fetchrow_hashref()) {
 		if (my ($match, $mod) = $r->{regstring} =~ /\/(.+)\/(.*)/) {
 			$mod = '' if not $mod;
+			$mod =~ s/ //g;
 			if ($ua =~ /(?$mod)$match/) {
 				$self->{device_id} = $r->devices;
 				last;
@@ -262,9 +268,60 @@ sub parse_fragments {
 	my $self 				= shift;
 	my $data 				= shift;
 	my $dbh 				= $self->{dbh};
-	my $browser_id			= $self->{browser_id} || return;
+	my $ua					= $self->{ua} 			|| return;
+	my $browser_id			= $self->{browser_id} 	|| return;
+
+	my $fragments = get_fragments($ua);
+
+	FRAGMENT:	foreach my $frag (@$fragments) {
+					print "Process fragment: $frag\n";
+
+					my $sth = $dbh->prepare(qq{SELECT note, regstring, regstring2, regstring3, regstring3 FROM reg_fragment ORDER BY sequence ASC}) or do{$self->error("Error: ". $dbh->errstr); return};
+					$sth->execute() or do{$self->error("Error: " . $dbh->errstr); return};
+					while (my $r = $sth->fetchrow_hashref()) {
+						if (my ($match, $mod) = $r->{regstring} =~ /\/(.+)\/(.*)/) {
+							$mod = '' if not $mod;
+							$mod =~ s/ //g;
+							if (my @replace = $frag =~ /(?$mod)$match/) {
+								my $note = $r->{note};
+								#Заменим части, найденные в фрагменте
+								$note =~ s/##(\d)##/$replace[$1-1]/g;
+								$data->{'['.$frag.']'} = $note;
+								next FRAGMENT;
+							}
+						}
+					}
+				}
 
 	return 1;
+}
+
+
+sub get_fragments {
+	my $ua = shift;
+	my @fragments;
+	print "In get fragments\n";
+
+	if ($ua =~ s/(.+?\(.+?\))//) {
+		my $frag = $1;
+		#Удалим ненужные символы
+		$frag =~ s/(\(|\)|;|\|)/ /g;
+		$frag =~ s/  / /g;
+		push @fragments, split / /, $frag;
+	}
+
+	#Вытащим значения в скобках, если такие есть
+	while ($ua =~ s/ ?(\(.+?\)) ?//) {
+		push @fragments, $1;
+	}
+
+
+	$ua =~ s/^ //g;
+	$ua =~ s/ $//g;
+	push @fragments, split / /, $ua;
+
+	return \@fragments;
+
 }
 
 
