@@ -37,7 +37,7 @@ sub new {
 	croak "You must specify -sqlite => <path to sqlite fname> or -dbh => ref to dbh connection" 
 		if not $self->{dbh};
     $self->{resources_url} = 'https://udger.com/resources/ua-list/';
-	$self->{error} = {};
+	$self->{error} = [];
 
 	bless $self, $class;
 	return $self;
@@ -274,7 +274,7 @@ sub parse_fragments {
 	my $fragments = get_fragments($ua);
 
 	FRAGMENT:	foreach my $frag (@$fragments) {
-					print "Process fragment: $frag\n";
+#					print "Process fragment: $frag\n";
 
 					my $sth = $dbh->prepare(qq{SELECT note, regstring, regstring2, regstring3, regstring3 FROM reg_fragment ORDER BY sequence ASC}) or do{$self->error("Error: ". $dbh->errstr); return};
 					$sth->execute() or do{$self->error("Error: " . $dbh->errstr); return};
@@ -300,7 +300,6 @@ sub parse_fragments {
 sub get_fragments {
 	my $ua = shift;
 	my @fragments;
-	print "In get fragments\n";
 
 	if ($ua =~ s/(.+?\(.+?\))//) {
 		my $frag = $1;
