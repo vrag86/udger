@@ -23,6 +23,7 @@ use open qw(:std :utf8);
 use DBI;
 use Carp qw/croak/;
 use Data::Printer;
+use Digest::MD5 qw(md5_hex);
 
 
 sub new {
@@ -79,8 +80,15 @@ sub parse {
 	$data{"device_name"}      = "Personal computer";
 	$data{"device_icon"}      = "desktop.png";
 	$data{"device_udger_url"} = $self->{resources_url}."device-detail?device=Personal%20computer";
+	$data{uptodate_controlled} 	= 'false';
+	$data{uptodate_is} 			= 'false';
+	$data{uptodate_ver}			= '';
+	$data{uptodate_url}			= '';
 
 	#Parsing data
+	my $is_bot = $self->parse_bot(\%data) or return;
+	return 1 if $is_bot == 1;
+
 	$self->parse_browser(\%data) or return;
 	$self->parse_os(\%data) or return;
 	$self->parse_device(\%data) or return;
@@ -92,6 +100,35 @@ sub parse {
 
 	return 1;
 
+}
+
+
+sub parse_bot {
+	my $self 				= shift;
+	my $data 				= shift;
+	my $ua					= $self->{ua} || return;
+	my $dbh 				= $self->{dbh};
+	$self->{bot} 			= 0;
+
+	my $md5 = md5_hex($ua);
+	my $sth = $dbh->prepare(qq{SELECT name, family, url, company, url_company, icon FROM c_robots where md5='$md5'}) or do{$self->error("Error: " . $dbh->errstr); return};;
+	$sth->execute() or do{$self->error("Error: " . $dbh->errstr); return};
+	if (my $r = $sth->fetchrow_hashref()) {
+		$data->{type}				= 'Robot';
+		$data->{ua_name} 			= $r->{name};
+		$data->{ua_family}			= $r->{family};
+		$data->{ua_url}				= $r->{url};
+		$data->{ua_company}			= $r->{company};
+		$data->{ua_company_url}		= $r->{url_company};
+		$data->{ua_icon}			= $r->{icon};
+		$data->{ua_udger_url}		= $self->{resources_url} . "bot-detail?bot=$r->{family}";
+		$data->{device_name}		= 'Other';
+		$data->{device_icon}		= 'other.png';
+		$data->{device_udger_url}	= $self->{resources_url} . "device-detail?device=Other";
+		return 1;
+	}
+
+	return -1;
 }
 
 
@@ -335,6 +372,11 @@ sub errstr {
 	$self->{error} ? join("\n", @{$self->{error}}) : undef;
 }
 
+sub is_bot {
+	my $self = shift;
+	$self->{bot} ? 1 : undef;
+}
+
 sub data {
 	my $self = shift;
 	$self->{data} ? $self->{data} : undef;
@@ -384,6 +426,9 @@ Print data to screen. Return undef if error.
 
 =item $client->data()
 Return $hashref to data or undef if error.
+
+=item1 $client->is_bot()
+Return 1 if bot, undef - otherwise
 
 =cut
 
