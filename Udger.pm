@@ -23,8 +23,6 @@ use open qw(:std :utf8);
 use DBI;
 use Carp qw/croak/;
 use Digest::MD5 qw(md5_hex);
-use Data::Printer;
-
 
 sub new {
 	my ($class, %opt) 		= @_;
