@@ -23,19 +23,15 @@ use open qw(:std :utf8);
 use DBI;
 use Carp qw/croak/;
 use Digest::MD5 qw(md5_hex);
+use Data::Printer;
 
 
 sub new {
-	my ($class, %opt) = @_;
-	my $self = {};
-	$self->{dbh} = $opt{-dbh} if $opt{-dbh};
-	if ($opt{-sqlite}) {
-		croak "Not exist sqlite file $opt{-sqlite}" if not -e $opt{-sqlite};
-		$self->{dbh} = db_connect( $opt{-sqlite} ) or croak "Cant create connect to sqlite";
-	}
-
-	croak "You must specify -sqlite => <path to sqlite fname> or -dbh => ref to dbh connection" 
-		if not $self->{dbh};
+	my ($class, %opt) 		= @_;
+	my $self 				= {};
+	$self->{dbh_main}		= $opt{-dbh} if $opt{-dbh};
+	$self->{sqlite}			= $opt{-sqlite} if $opt{-sqlite};
+	$self->{sqlite_v3}		= $opt{-sqlite_v3} if $opt{-sqlite_v3};
     $self->{resources_url} = 'https://udger.com/resources/ua-list/';
 	$self->{error} = [];
 
@@ -51,10 +47,24 @@ sub db_connect {
 }
 
 
-sub parse {
+sub parse_ua {
 	my $self 			= shift;
-	$self->{ua} 		= shift || do {$self->error('Error parse: You must specify useragent $self->parse(\'UserAgent\')'); return};
+	$self->{ua} 		= shift || do {$self->error('Error parse: You must specify useragent $self->parse_ua(\'UserAgent\')'); return};
 	my %opt				= @_;
+	my $sqlite 			= $self->{sqlite} || $opt{-sqlite};
+
+	if ($self->{dbh_main}) {
+		$self->{dbh} = $self->{dbh_main};
+	}
+	else {
+		if ($sqlite) {
+			croak "Not exist sqlite file $sqlite" if not -e $sqlite;
+			$self->{dbh} = db_connect( $sqlite ) or croak "Cant create connect to sqlite";
+		}
+		else {
+			croak "You must specify -sqlite or -dbh";
+		}
+	}
 
 	my %data;
 	$self->{data} = \%data;
@@ -360,6 +370,103 @@ sub get_fragments {
 }
 
 
+
+#*******************************************************************************************************
+#
+#
+#					PARSE IP via v3 db
+#
+#*******************************************************************************************************
+#
+
+
+sub parse_ip {
+	my $self 			= shift;
+	$self->{ip} 		= shift || do {$self->error('Error parse: You must specify ip_address $self->parse_ip(\'8.8.8.8\')'); return};
+	my %opt				= @_;
+	my $sqlite 			= $self->{sqlite_v3} || $opt{-sqlite_v3};
+
+	if ($self->{dbh_main}) {
+		$self->{dbh} = $self->{dbh_main};
+	}
+	else {
+		if ($sqlite) {
+			croak "Not exist sqlite file $sqlite" if not -e $sqlite;
+			$self->{dbh} = db_connect( $sqlite ) or croak "Cant create connect to sqlite_v3";
+		}
+		else {
+			croak "You must specify -sqlite_v3 or -dbh";
+		}
+	}
+
+	my %data;
+	$self->{data}->{ip} = \%data;
+
+	$data{"ip_last_seen"}      	= "";
+	$data{"ip_hostname"}        = "";
+	$data{"ip_country"}         = "";
+	$data{"ip_country_code"}    = "";
+	$data{"ip_city"}        	= "unknown";
+	$data{"is_bot"}				= 0;
+	foreach my $key (qw/ua_string name ver ver_major class_id last_seen respect_robotstxt family family_code family_homepage family_icon vendor vendor_code vendor_homepage/) {
+		$data{$key} 			= '';
+	}
+
+	$self->get_ip_info (\%data) or return;
+	$self->{crawler_id} = 16808;
+	$self->get_crawler_info (\%data) or return;
+
+	return 1;
+
+}
+
+
+sub get_ip_info
+{
+	my $self = shift;
+	my $data = shift;
+	my $ip = $self->{ip};
+	my $dbh = $self->{dbh};
+	
+	my $sth = $dbh->prepare(qq{SELECT ip_last_seen, crawler_id, ip_hostname, ip_country, ip_city, ip_country_code FROM udger_ip_list WHERE ip='$ip'}) or do{$self->error("Error: ". $dbh->errstr); return};
+	$sth->execute() or do{$self->error("Error: ". $dbh->errstr); return};
+
+	if (my $r = $sth->fetchrow_hashref()) {
+		$data->{is_bot} 				= 1;
+		$self->{bot_v3} 					= 1;
+		$data->{ip_last_seen}			= $r->{ip_last_seen};
+		$self->{crawler_id}				= $r->{crawler_id};
+		$data->{ip_hostname}			= $r->{ip_hostname};
+		$data->{ip_country}				= $r->{ip_country};
+		$data->{ip_city}				= $r->{ip_city};
+		$data->{ip_country_code}		= $r->{ip_country_code};
+	}
+
+	return 1;
+}
+
+
+sub get_crawler_info
+{
+	my $self = shift;
+	my $data = shift;
+	my $ip = $self->{ip};
+	my $dbh = $self->{dbh};
+	my $crawler_id = $self->{crawler_id} or return 1;
+	
+	my $sth = $dbh->prepare(qq{SELECT ua_string, name, ver, ver_major, class_id, last_seen, respect_robotstxt, family, family_code, family_homepage, family_icon, vendor, vendor_code, vendor_homepage
+															FROM udger_crawler_list WHERE id='$crawler_id'}) or do{$self->error("Error: ". $dbh->errstr); return};
+	$sth->execute() or do{$self->error("Error: ". $dbh->errstr); return};
+
+	if (my $r = $sth->fetchrow_hashref()) {
+		foreach my $key (keys %$r) {
+			$data->{$key}		= $r->{$key};
+		}
+	}
+
+	return 1;
+}
+
 sub error {
 	my $self = shift;
 	push @{$self->{error}}, @_;
@@ -376,9 +483,31 @@ sub is_bot {
 	$self->{bot} ? 1 : undef;
 }
 
+sub is_bot_v3 {
+	my $self = shift;
+	$self->{bot_v3} ? 1 : undef;
+}
+
 sub data {
 	my $self = shift;
 	$self->{data} ? $self->{data} : undef;
+}
+
+sub print {
+	my $self = shift;
+	return if not $self->{data};
+	foreach my $key (keys %{$self->{data}}) {
+		print "\n$key ======> ";
+		if (ref ($self->{data}->{$key}) =~ 'HASH') {
+			foreach my $key2 (keys %{$self->{data}->{$key}}) {
+				print "\n\t\t$key2 =====> $self->{data}->{$key}->{$key2}";
+			}
+		}
+		else {
+			print "$self->{data}->{$key}";
+		}
+	}
+	return 1;
 }
 
 =pod
@@ -392,8 +521,9 @@ Udger - Perl agent string parser based on Udger https://udger.com/products/local
 use Udger;
 my $client = Udger->new(%opt);
 
-$opt{-sqlite} - 	Path to Sqlite3 udger file
-$opt{-dbh}			Reference to dbh (DBI object) to database which contains udger DB
+$opt{-sqlite}	 	- 	Path to Sqlite3 udger db version 1 file
+$opt{-sqlite_v3} 	- 	Path to Sqlite3 udger db version 3 file
+$opt{-dbh}				Reference to dbh (DBI object) to database which contains udger DB
 
 =head1 EXAMPLES
 use Udger;
@@ -402,7 +532,7 @@ use Data::Printer;
 my $ua = 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:43.0) Gecko/20100101 Firefox/43.0';
 my $client = Udger->new(-sqlite => '/tmp/udgerdb.dat');
 
-$client->parse(ua) or die "Cant parse $ua " . $client->errstr;
+$client->parse_ua(ua) or die "Cant parse $ua " . $client->errstr;
 my $data = $client->data();
 p $data;  #Print $data hashref via Data::Printer
 
