@@ -411,7 +411,6 @@ sub parse_ip {
 	}
 
 	$self->get_ip_info (\%data) or return;
-	$self->{crawler_id} = 16808;
 	$self->get_crawler_info (\%data) or return;
 
 	return 1;
@@ -431,7 +430,7 @@ sub get_ip_info
 
 	if (my $r = $sth->fetchrow_hashref()) {
 		$data->{is_bot} 				= 1;
-		$self->{bot_v3} 					= 1;
+		$self->{bot_v3} 				= 1;
 		$data->{ip_last_seen}			= $r->{ip_last_seen};
 		$self->{crawler_id}				= $r->{crawler_id};
 		$data->{ip_hostname}			= $r->{ip_hostname};
